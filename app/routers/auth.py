@@ -1,43 +1,48 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+
 from app.database import get_db
 from app.models.user import User
+from app.schemas.user_schema import UserRegister, UserLogin
 from app.core.security import hash_password, verify_password, create_access_token
-from fastapi import HTTPException
 
-router = APIRouter(prefix="/auth")
+router = APIRouter(prefix="/auth", tags=["Auth"])
+
 
 @router.post("/register")
-def register(username:str,email:str,password:str,db:Session=Depends(get_db)):
+def register(user: UserRegister, db: Session = Depends(get_db)):
 
-    user = User(
-        username=username,
-        email=email,
-        password=hash_password(password)
+    existing_user = db.query(User).filter(User.username == user.username).first()
+
+    if existing_user:
+        raise HTTPException(status_code=400, detail="Username already exists")
+
+    new_user = User(
+        username=user.username,
+        email=user.email,
+        password=hash_password(user.password)
     )
 
-    db.add(user)
+    db.add(new_user)
     db.commit()
+    db.refresh(new_user)
 
-    return {"message":"user created"}
+    return {"message": "User created successfully"}
+
 
 @router.post("/login")
-def login(
-    username: str,
-    password: str,
-    db: Session = Depends(get_db)
-):
+def login(user: UserLogin, db: Session = Depends(get_db)):
 
-    user = db.query(User).filter(User.username == username).first()
+    db_user = db.query(User).filter(User.username == user.username).first()
 
-    if not user:
+    if not db_user:
         raise HTTPException(status_code=401, detail="Invalid username")
 
-    if not verify_password(password, user.password):
+    if not verify_password(user.password, db_user.password):
         raise HTTPException(status_code=401, detail="Invalid password")
 
     token = create_access_token(
-        data={"sub": user.username}   # VERY IMPORTANT
+        data={"sub": db_user.username}
     )
 
     return {

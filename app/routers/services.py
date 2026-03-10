@@ -1,11 +1,16 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+
 from geoalchemy2.elements import WKTElement
 from geoalchemy2.functions import ST_DWithin, ST_Distance
 
 from app.database import get_db
 from app.models.service import Service
-from app.schemas.service_schema import ServiceCreate, ServiceUpdate
+from app.schemas.service_schema import (
+    ServiceCreate,
+    ServiceUpdate
+)
+
 from app.core.security import get_current_user
 
 
@@ -13,6 +18,7 @@ router = APIRouter(
     prefix="/services",
     tags=["Services"]
 )
+
 
 @router.post("/add")
 def add_service(
@@ -34,9 +40,12 @@ def add_service(
 
     db.add(new_service)
     db.commit()
+    db.refresh(new_service)
 
-    return {"message": "Service added successfully"}
-
+    return {
+        "message": "Service added successfully",
+        "service_id": new_service.id
+    }
 
 
 @router.get("/list")
@@ -67,7 +76,7 @@ def list_services(
 def nearby_services(
     latitude: float,
     longitude: float,
-    radius: int,
+    radius: int = 5,
     category: str = None,
     db: Session = Depends(get_db)
 ):
@@ -84,12 +93,13 @@ def nearby_services(
         ST_DWithin(Service.location, user_location, radius * 1000)
     )
 
-    
     if category:
         query = query.filter(Service.category == category)
 
-    
-    results = query.order_by("distance", Service.rating.desc()).all()
+    results = query.order_by(
+        ST_Distance(Service.location, user_location),
+        Service.rating.desc()
+    ).all()
 
     return [
         {
@@ -102,6 +112,7 @@ def nearby_services(
         for service, distance in results
     ]
 
+
 @router.put("/update/{service_id}")
 def update_service(
     service_id: int,
@@ -113,7 +124,10 @@ def update_service(
     existing_service = db.query(Service).filter(Service.id == service_id).first()
 
     if not existing_service:
-        raise HTTPException(status_code=404, detail="Service not found")
+        raise HTTPException(
+            status_code=404,
+            detail="Service not found"
+        )
 
     if service.name:
         existing_service.name = service.name
@@ -121,10 +135,14 @@ def update_service(
     if service.category:
         existing_service.category = service.category
 
+    if service.rating is not None:
+        existing_service.rating = service.rating
+
     db.commit()
 
-    return {"message": "Service updated successfully"}
-
+    return {
+        "message": "Service updated successfully"
+    }
 
 
 @router.delete("/delete/{service_id}")
@@ -137,9 +155,14 @@ def delete_service(
     service = db.query(Service).filter(Service.id == service_id).first()
 
     if not service:
-        raise HTTPException(status_code=404, detail="Service not found")
+        raise HTTPException(
+            status_code=404,
+            detail="Service not found"
+        )
 
     db.delete(service)
     db.commit()
 
-    return {"message": "Service deleted successfully"}
+    return {
+        "message": "Service deleted successfully"
+    }
